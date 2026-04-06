@@ -1,36 +1,53 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
-
-# testing
-/coverage
-
-# next.js
-/.next/
-/out/
-
-# production
-/build
-
-# misc
+# macOS
 .DS_Store
-*.pem
 
-# debug
+# dependencies (monorepo root + apps)
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+.pnp
+.pnp.*
+
+# Yarn Berry
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+.pnpm-debug.log*
 
-# local env files
-.env*.local
+# env files
 .env
+!.env.example
+!.env.*.example
 
-# vercel
-.vercel
+# build, cache, and test artifacts
+coverage/
+**/coverage/
+build/
+**/build/
+dist/
+**/dist/
+.cache/
 
-# typescript
-*.tsbuildinfo
+# Next.js output (frontend)
+.next/
+frontend/.next/
+out/
+frontend/out/
 next-env.d.ts
+
+# deployment
+.vercel/
+
+# misc secrets/artifacts
+*.pem
+
+# TypeScript
+*.tsbuildinfo
