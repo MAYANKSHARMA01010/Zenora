@@ -20,7 +20,6 @@ class App {
 
     public startServer() {
         this.app.listen(this.port, () => {
-            console.log(`Server listening on http://localhost:${this.port}`);
             console.log(`DEBUG: NODE_ENV = ${process.env.NODE_ENV}`);
             console.log(`Local Backend URL: ${process.env.BACKEND_LOCAL_URL}`);
             console.log(`Deployed Backend URL: ${process.env.BACKEND_SERVER_URL}`);
