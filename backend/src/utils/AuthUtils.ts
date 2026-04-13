@@ -15,6 +15,11 @@ interface PasswordResetPayload {
   purpose: "password-reset";
 }
 
+interface OAuthStatePayload {
+  role: Role;
+  purpose: "google-oauth-state";
+}
+
 export class AuthUtils {
   /**
    * Generate Access and Refresh JWT tokens
@@ -71,6 +76,32 @@ export class AuthUtils {
 
     if (decoded.purpose !== "password-reset") {
       throw new Error("Invalid password reset token");
+    }
+
+    return decoded;
+  }
+
+  /**
+   * Generate OAuth state for Google login
+   * @param role Selected role
+   */
+  public static generateGoogleOAuthState(role: Role): string {
+    return jwt.sign(
+      { role, purpose: "google-oauth-state" },
+      env.JWT_SESSION_SECRET,
+      { expiresIn: "10m" },
+    );
+  }
+
+  /**
+   * Verify OAuth state from Google callback
+   * @param state OAuth state string
+   */
+  public static verifyGoogleOAuthState(state: string): OAuthStatePayload {
+    const decoded = jwt.verify(state, env.JWT_SESSION_SECRET) as OAuthStatePayload;
+
+    if (decoded.purpose !== "google-oauth-state") {
+      throw new Error("Invalid OAuth state");
     }
 
     return decoded;

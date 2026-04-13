@@ -2,18 +2,51 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { getGoogleAuthUrl } from "@/api/auth";
 import { useAuth } from "@/hooks/useAuth";
 import type { AuthRole } from "@/context/AuthContext";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, forgotPassword, isLoading } = useAuth();
+  const { login, setSession, forgotPassword, isLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<AuthRole>("CLIENT");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    const handleOAuthCallback = async () => {
+      if (typeof window === "undefined" || !window.location.hash) {
+        return;
+      }
+
+      const params = new URLSearchParams(window.location.hash.slice(1));
+      const accessToken = params.get("accessToken");
+      const refreshToken = params.get("refreshToken");
+      const userRaw = params.get("user");
+
+      if (!accessToken || !refreshToken || !userRaw) {
+        return;
+      }
+
+      try {
+        const user = JSON.parse(userRaw) as { id?: string; name?: string; email: string; role: AuthRole };
+        setSession({
+          user,
+          accessToken,
+          refreshToken,
+        });
+        window.history.replaceState(null, "", window.location.pathname);
+        router.push("/");
+      } catch {
+        setError("Could not complete Google login");
+      }
+    };
+
+    void handleOAuthCallback();
+  }, [router, setSession]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -48,6 +81,10 @@ export default function LoginPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Forgot password request failed");
     }
+  }
+
+  function handleGoogleLogin() {
+    window.location.assign(getGoogleAuthUrl(role));
   }
 
   return (
@@ -112,6 +149,14 @@ export default function LoginPage() {
             className="w-full rounded-md bg-zinc-900 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
           >
             {isLoading ? "Please wait..." : "Login"}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleGoogleLogin}
+            className="w-full rounded-md border border-zinc-300 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-100"
+          >
+            Continue with Google
           </button>
 
           <div className="flex items-center justify-between text-sm pt-1">

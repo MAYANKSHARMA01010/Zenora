@@ -26,6 +26,7 @@ type AuthContextValue = {
     isAuthenticated: boolean;
     isLoading: boolean;
     login: (payload: { email: string; password: string; role: AuthRole }) => Promise<void>;
+    setSession: (payload: { user: AuthUser; accessToken: string; refreshToken: string }) => void;
     refreshSession: () => Promise<void>;
     logout: () => Promise<void>;
     forgotPassword: (email: string) => Promise<string>;
@@ -76,6 +77,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(next));
     }
 
+    function setSession(payload: { user: AuthUser; accessToken: string; refreshToken: string }) {
+        setUser(payload.user);
+        setAccessToken(payload.accessToken);
+        setRefreshToken(payload.refreshToken);
+        persistAuth(payload);
+    }
+
     async function login(payload: { email: string; password: string; role: AuthRole }) {
         setIsLoading(true);
         try {
@@ -84,10 +92,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
             const nextAccessToken = response.data.accessToken ?? null;
             const nextRefreshToken = response.data.refreshToken ?? null;
 
-            setUser(nextUser);
-            setAccessToken(nextAccessToken);
-            setRefreshToken(nextRefreshToken);
-            persistAuth({ user: nextUser, accessToken: nextAccessToken, refreshToken: nextRefreshToken });
+            if (!nextAccessToken || !nextRefreshToken) {
+                throw new Error("Token response is incomplete");
+            }
+
+            setSession({ user: nextUser, accessToken: nextAccessToken, refreshToken: nextRefreshToken });
         } finally {
             setIsLoading(false);
         }
@@ -116,16 +125,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
         const nextAccessToken = response.data.accessToken ?? accessToken;
         const nextRefreshToken = response.data.refreshToken ?? refreshToken;
 
-        setUser(nextUser ?? null);
-        setAccessToken(nextAccessToken ?? null);
-        setRefreshToken(nextRefreshToken ?? null);
-
-        if (nextUser && nextAccessToken) {
-            persistAuth({
+        if (nextUser && nextAccessToken && nextRefreshToken) {
+            setSession({
                 user: nextUser,
                 accessToken: nextAccessToken,
-                refreshToken: nextRefreshToken ?? null,
+                refreshToken: nextRefreshToken,
             });
+        } else {
+            throw new Error("Refresh response is incomplete");
         }
     }
 
@@ -160,6 +167,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isAuthenticated: Boolean(user),
         isLoading,
         login,
+        setSession,
         refreshSession,
         logout,
         forgotPassword,

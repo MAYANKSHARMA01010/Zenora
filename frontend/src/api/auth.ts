@@ -43,6 +43,12 @@ export async function loginApi(payload: { email: string; password: string; role:
   });
 }
 
+export function getGoogleAuthUrl(role: AuthRole) {
+  const url = new URL(`${API_BASE_URL}/auth/google/start`);
+  url.searchParams.set("role", role);
+  return url.toString();
+}
+
 export async function logoutApi(accessToken?: string) {
   return request<null>("/auth/logout", {
     method: "POST",
