@@ -8,26 +8,72 @@ import type { AuthRole } from "@/context/AuthContext";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, loginWithGoogle, forgotPassword, isLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<AuthRole>("CLIENT");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setError("");
+    setMessage("");
 
     if (!email || !password) {
+      setError("Email and password are required");
       return;
     }
 
-    login({ email, role });
-    router.push("/");
+    try {
+      await login({ email, password, role });
+      router.push("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed");
+    }
+  }
+
+  async function handleGoogleLogin() {
+    setError("");
+    setMessage("");
+
+    if (!email) {
+      setError("Enter your email first for Google login");
+      return;
+    }
+
+    try {
+      await loginWithGoogle({ email, role });
+      router.push("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Google login failed");
+    }
+  }
+
+  async function handleForgotPassword() {
+    setError("");
+    setMessage("");
+
+    if (!email) {
+      setError("Enter your email first");
+      return;
+    }
+
+    try {
+      const responseMessage = await forgotPassword(email);
+      setMessage(responseMessage);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Forgot password request failed");
+    }
   }
 
   return (
     <main className="min-h-screen bg-zinc-50 flex items-center justify-center px-4">
       <div className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
         <h1 className="text-2xl font-semibold text-zinc-900 mb-6 text-center">Login</h1>
+
+        {error ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
+        {message ? <p className="mb-3 text-sm text-green-600">{message}</p> : null}
 
         <form className="space-y-4" onSubmit={handleSubmit}>
           <div>
@@ -79,13 +125,16 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            className="w-full rounded-md bg-zinc-900 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            disabled={isLoading}
+            className="w-full rounded-md bg-zinc-900 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
           >
-            Login
+            {isLoading ? "Please wait..." : "Login"}
           </button>
 
           <button
             type="button"
+            onClick={handleGoogleLogin}
+            disabled={isLoading}
             className="w-full rounded-md border border-zinc-300 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-100 flex items-center justify-center gap-2"
           >
             <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" xmlns="http://www.w3.org/2000/svg">
@@ -110,9 +159,9 @@ export default function LoginPage() {
           </button>
 
           <div className="flex items-center justify-between text-sm pt-1">
-            <Link href="/forgot-password" className="text-zinc-700 hover:text-zinc-900 underline">
+            <button type="button" onClick={handleForgotPassword} className="text-zinc-700 hover:text-zinc-900 underline">
               Forgot Password?
-            </Link>
+            </button>
             <Link href="/" className="text-zinc-700 hover:text-zinc-900 underline">
               Go to Home
             </Link>
