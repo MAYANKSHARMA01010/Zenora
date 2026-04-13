@@ -6,6 +6,7 @@ import { LogMiddleware } from "./middlewares/requestLogger";
 import { RateLimitMiddleware } from "./middlewares/rateLimiter";
 import { ErrorMiddleware } from "./middlewares/errorHandler";
 import { ApiResponse } from "./utils/ApiResponse";
+import { authRouter } from "./routes/auth.routes";
 
 export class App {
   public express: express.Application;
@@ -47,12 +48,8 @@ export class App {
       });
     });
 
-    // 8. All feature routers mounted under /api/v1/ (leave placeholders as comments)
-    /**
-     * Mount your routers here:
-     * this.express.use("/api/v1/auth", authRouter);
-     * ...
-     */
+    // 8. Mount auth router
+    this.express.use("/api/v1/auth", authRouter);
   }
 
   private setErrorHandlers(): void {

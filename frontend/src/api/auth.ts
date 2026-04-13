@@ -12,7 +12,11 @@ type AuthResponseData = {
   refreshToken?: string;
 };
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5000/api/v1";
+type ForgotPasswordResponseData = {
+  resetToken: string | null;
+};
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5001/api/v1";
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<ApiEnvelope<T>> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -39,13 +43,6 @@ export async function loginApi(payload: { email: string; password: string; role:
   });
 }
 
-export async function googleLoginApi(payload: { email: string; role: AuthRole }) {
-  return request<AuthResponseData>("/auth/google-login", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
 export async function logoutApi(accessToken?: string) {
   return request<null>("/auth/logout", {
     method: "POST",
@@ -61,7 +58,14 @@ export async function refreshTokenApi(payload: { refreshToken: string }) {
 }
 
 export async function forgotPasswordApi(payload: { email: string }) {
-  return request<null>("/auth/forgot-password", {
+  return request<ForgotPasswordResponseData>("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function resetPasswordApi(payload: { token: string; newPassword: string }) {
+  return request<null>("/auth/reset-password", {
     method: "POST",
     body: JSON.stringify(payload),
   });

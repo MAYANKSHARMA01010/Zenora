@@ -9,6 +9,12 @@ interface TokenPayload {
   isActive: boolean;
 }
 
+interface PasswordResetPayload {
+  id: string;
+  email: string;
+  purpose: "password-reset";
+}
+
 export class AuthUtils {
   /**
    * Generate Access and Refresh JWT tokens
@@ -40,6 +46,34 @@ export class AuthUtils {
    */
   public static verifyRefreshToken(token: string): TokenPayload {
     return jwt.verify(token, env.JWT_REFRESH_SECRET) as TokenPayload;
+  }
+
+  /**
+   * Generate a password reset token
+   * @param payload User data to include in token
+   */
+  public static generatePasswordResetToken(payload: { id: string; email: string }) {
+    return jwt.sign(
+      { ...payload, purpose: "password-reset" },
+      env.JWT_SESSION_SECRET,
+      {
+        expiresIn: "1h",
+      },
+    );
+  }
+
+  /**
+   * Verify a password reset token
+   * @param token JWT token string
+   */
+  public static verifyPasswordResetToken(token: string): PasswordResetPayload {
+    const decoded = jwt.verify(token, env.JWT_SESSION_SECRET) as PasswordResetPayload;
+
+    if (decoded.purpose !== "password-reset") {
+      throw new Error("Invalid password reset token");
+    }
+
+    return decoded;
   }
 
   /**

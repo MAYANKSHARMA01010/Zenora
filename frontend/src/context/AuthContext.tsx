@@ -4,9 +4,9 @@ import { createContext, useEffect, useState, type ReactNode } from "react";
 import {
     changePasswordApi,
     forgotPasswordApi,
-    googleLoginApi,
     loginApi,
     refreshTokenApi,
+    resetPasswordApi,
     logoutApi,
 } from "@/api/auth";
 
@@ -26,10 +26,10 @@ type AuthContextValue = {
     isAuthenticated: boolean;
     isLoading: boolean;
     login: (payload: { email: string; password: string; role: AuthRole }) => Promise<void>;
-    loginWithGoogle: (payload: { email: string; role: AuthRole }) => Promise<void>;
     refreshSession: () => Promise<void>;
     logout: () => Promise<void>;
     forgotPassword: (email: string) => Promise<string>;
+    resetPassword: (payload: { token: string; newPassword: string }) => Promise<string>;
     changePassword: (payload: { currentPassword: string; newPassword: string }) => Promise<string>;
 };
 
@@ -80,30 +80,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setIsLoading(true);
         try {
             const response = await loginApi(payload);
-            const nextUser = {
-                ...response.data.user,
-                role: payload.role,
-            };
-            const nextAccessToken = response.data.accessToken ?? null;
-            const nextRefreshToken = response.data.refreshToken ?? null;
-
-            setUser(nextUser);
-            setAccessToken(nextAccessToken);
-            setRefreshToken(nextRefreshToken);
-            persistAuth({ user: nextUser, accessToken: nextAccessToken, refreshToken: nextRefreshToken });
-        } finally {
-            setIsLoading(false);
-        }
-    }
-
-    async function loginWithGoogle(payload: { email: string; role: AuthRole }) {
-        setIsLoading(true);
-        try {
-            const response = await googleLoginApi(payload);
-            const nextUser = {
-                ...response.data.user,
-                role: payload.role,
-            };
+            const nextUser = response.data.user;
             const nextAccessToken = response.data.accessToken ?? null;
             const nextRefreshToken = response.data.refreshToken ?? null;
 
@@ -154,6 +131,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     async function forgotPassword(email: string) {
         const response = await forgotPasswordApi({ email });
+        return response.data.resetToken ? `${response.message}\nReset Token: ${response.data.resetToken}` : response.message;
+    }
+
+    async function resetPassword(payload: { token: string; newPassword: string }) {
+        const response = await resetPasswordApi(payload);
         return response.message;
     }
 
@@ -178,10 +160,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isAuthenticated: Boolean(user),
         isLoading,
         login,
-        loginWithGoogle,
         refreshSession,
         logout,
         forgotPassword,
+        resetPassword,
         changePassword,
     };
 
