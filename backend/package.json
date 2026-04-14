@@ -47,6 +47,6 @@
     "bcrypt": "latest",
     "nodemon": "latest",
     "tsx": "latest",
-    "typescript": "latest"
+    "typescript": "~5.8.0"
   }
 }
