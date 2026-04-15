@@ -1,4 +1,5 @@
 import { DatabaseService } from "../config/database";
+import { Prisma } from "@prisma/client";
 import { Role } from "../constants/roles";
 import { ApiError } from "../utils/ApiError";
 
@@ -13,9 +14,9 @@ type CreateTherapistProfilePayload = {
   licenseNumber: string;
   specialization: string;
   experience: number;
-  workingHours: Record<string, unknown>;
+  workingHours: Prisma.InputJsonValue;
   bio?: string;
-  bankAccountInfo?: Record<string, unknown>;
+  bankAccountInfo?: Prisma.InputJsonValue;
 };
 
 type CreateAdminProfilePayload = {

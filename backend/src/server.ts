@@ -4,8 +4,9 @@ import { DatabaseService } from "./config/database";
 import { LoggerService } from "./utils/logger";
 import { RedisService } from "./config/redis";
 import AuthRoutes from "./routes/auth.routes";
+import ProfileRoutes from "./routes/profile.routes";
 
-const app = new App([new AuthRoutes()]).express;
+const app = new App([new AuthRoutes(), new ProfileRoutes()]).express;
 
 export class Server {
   public static async start(): Promise<void> {
