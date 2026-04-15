@@ -1,4 +1,5 @@
 import { type Request, type Response } from "express";
+import { Prisma } from "@prisma/client";
 import { ApiResponse } from "../utils/ApiResponse";
 import { profileService } from "../services/profile.service";
 
@@ -20,9 +21,9 @@ export class ProfileController {
       licenseNumber: string;
       specialization: string;
       experience: number;
-      workingHours: Record<string, unknown>;
+      workingHours: Prisma.InputJsonValue;
       bio?: string;
-      bankAccountInfo?: Record<string, unknown>;
+      bankAccountInfo?: Prisma.InputJsonValue;
     };
 
     const data = await profileService.createTherapistProfile(req.user!.id, req.user!.role, body);
