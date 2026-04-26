@@ -1,115 +1,224 @@
-import { randomUUID } from "node:crypto";
 import { OAuth2Client } from "google-auth-library";
-import { DatabaseService } from "../config/database";
-import { env } from "../config/env";
+import { randomUUID } from "node:crypto";
+import { computedEnv, env } from "../config/env";
 import { Role } from "../constants/roles";
+import { User, OnboardingProfile, UserResponse } from "../entities/User";
+import { UserRepository, userRepository } from "../repositories/UserRepository";
 import { ApiError } from "../utils/ApiError";
 import { AuthUtils } from "../utils/AuthUtils";
-
-export type AuthUserResponse = {
-  id: string;
-  name: string;
-  email: string;
-  role: Role;
-  onboardingCompleted: boolean;
-};
-
-type OnboardingProfile = {
-  fullName: string;
-  careGoal: "stress" | "sleep" | "relationships" | "career" | "other";
-  sessionStyle: "video" | "chat" | "mixed";
-  reminderChannel: "email" | "whatsapp" | "none";
-};
-
-type AuthUserRecord = {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  isActive: boolean;
-  onboardingCompleted: boolean;
-};
+import { TokenService } from "./token.service";
 
 type TokenPair = {
   accessToken: string;
   refreshToken: string;
 };
 
+type AuthSuccess = {
+  user: UserResponse;
+  accessToken: string;
+  refreshToken: string;
+};
+
+export type RegisterPayload = {
+  name: string;
+  email: string;
+  password: string;
+  role: Role;
+  phone?: string | null;
+};
+
+export type LoginPayload = {
+  email: string;
+  password: string;
+  role: Role;
+};
+
+export type ChangePasswordPayload = {
+  currentPassword: string;
+  newPassword: string;
+};
+
 export class AuthService {
-  private normalizeEmail(email: string) {
-    return email.trim().toLowerCase();
-  }
+  constructor(private readonly users: UserRepository = userRepository) {}
 
-  private parseRole(role?: string): Role | undefined {
-    if (role === Role.CLIENT || role === Role.THERAPIST || role === Role.ADMIN) {
-      return role;
+  public async register(payload: RegisterPayload): Promise<AuthSuccess> {
+    if (await this.users.existsByEmail(payload.email)) {
+      throw ApiError.conflict("An account with this email already exists");
     }
 
-    return undefined;
-  }
-
-  private getGoogleOAuthConfig() {
-    const { computedEnv } = require("../config/env");
-    if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !computedEnv.GOOGLE_REDIRECT_URI) {
-      throw ApiError.badRequest("Google OAuth is not configured");
-    }
-    return {
-      clientId: env.GOOGLE_CLIENT_ID,
-      clientSecret: env.GOOGLE_CLIENT_SECRET,
-      redirectUri: computedEnv.GOOGLE_REDIRECT_URI,
-    };
-  }
-
-  private getFrontendRedirectBase() {
-    return env.NODE_ENV === "production"
-      ? env.FRONTEND_SERVER_URL || env.FRONTEND_LOCAL_URL
-      : env.FRONTEND_LOCAL_URL;
-  }
-
-  private buildUserResponse(user: AuthUserRecord): AuthUserResponse {
-    return {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role as Role,
-      onboardingCompleted: user.onboardingCompleted,
-    };
-  }
-
-  private issueTokens(user: AuthUserRecord): TokenPair {
-    return AuthUtils.generateTokens({
-      id: user.id,
-      role: user.role as Role,
-      isActive: user.isActive,
+    const user = await User.create({
+      name: payload.name,
+      email: payload.email,
+      password: payload.password,
+      role: payload.role,
+      phone: payload.phone ?? null,
     });
+
+    await this.users.insert(user);
+    await this.users.ensureRoleProfile(user.id, user.role);
+
+    const tokens = this.issueTokens(user);
+    return { user: user.toResponse(), ...tokens };
   }
 
-  private async ensureRoleProfile(userId: string, role: Role) {
-    const db = await DatabaseService.getInstance();
+  public async login(payload: LoginPayload): Promise<AuthSuccess> {
+    const user = await this.users.findByEmail(payload.email);
+    if (!user) throw ApiError.unauthorized("Invalid email or password");
 
-    if (role === Role.CLIENT) {
-      await db.client.upsert({
-        where: { id: userId },
-        update: {},
-        create: { id: userId },
-      });
+    if (!user.isActive) throw ApiError.unauthorized("User account is inactive");
+
+    if (!this.canLoginAs(user.role, payload.role)) {
+      throw ApiError.unauthorized(
+        `This account is registered as ${user.role}. Please continue as ${user.role}.`,
+      );
     }
 
-    if (role === Role.ADMIN) {
-      await db.admin.upsert({
-        where: { id: userId },
-        update: {},
-        create: { id: userId },
-      });
+    const isPasswordValid = await user.verifyPassword(payload.password);
+    if (!isPasswordValid) throw ApiError.unauthorized("Invalid email or password");
+
+    const tokens = this.issueTokens(user);
+    return { user: user.toResponse(), ...tokens };
+  }
+
+  public async refresh(refreshToken: string): Promise<AuthSuccess> {
+    const isRevoked = await TokenService.isRefreshTokenRevoked(refreshToken);
+    if (isRevoked) throw ApiError.unauthorized("Refresh token has been revoked");
+
+    const decoded = AuthUtils.verifyRefreshToken(refreshToken);
+    const user = await this.users.findById(decoded.id);
+
+    if (!user) throw ApiError.unauthorized("User no longer exists");
+    if (!user.isActive) throw ApiError.unauthorized("User account is inactive");
+
+    await TokenService.revokeRefreshToken(refreshToken);
+
+    const tokens = this.issueTokens(user);
+    return { user: user.toResponse(), ...tokens };
+  }
+
+  public async logout(refreshToken?: string): Promise<void> {
+    if (refreshToken) {
+      await TokenService.revokeRefreshToken(refreshToken);
     }
+  }
+
+  public async forgotPassword(email: string) {
+    const user = await this.users.findByEmail(email);
+
+    if (!user) {
+      return {
+        message: "If this email exists, password reset instructions have been sent",
+        data: { resetToken: null as string | null },
+      };
+    }
+
+    const resetToken = AuthUtils.generatePasswordResetToken({
+      id: user.id,
+      email: user.email,
+    });
+
+    return {
+      message: "Password reset token generated",
+      data: {
+        resetToken: env.NODE_ENV === "development" ? resetToken : null,
+      },
+    };
+  }
+
+  public async resetPassword(token: string, newPassword: string): Promise<void> {
+    const decoded = AuthUtils.verifyPasswordResetToken(token);
+    const user = await this.users.findById(decoded.id);
+
+    if (!user || User.normalizeEmail(user.email) !== User.normalizeEmail(decoded.email)) {
+      throw ApiError.unauthorized("Invalid or expired reset token");
+    }
+
+    await user.setPassword(newPassword);
+    await this.users.update(user);
+  }
+
+  public async changePassword(userId: string, payload: ChangePasswordPayload): Promise<void> {
+    const user = await this.users.findById(userId);
+    if (!user) throw ApiError.unauthorized("User no longer exists");
+
+    const isPasswordValid = await user.verifyPassword(payload.currentPassword);
+    if (!isPasswordValid) throw ApiError.unauthorized("Current password is incorrect");
+
+    await user.setPassword(payload.newPassword);
+    await this.users.update(user);
+  }
+
+  public async sendEmailVerification(userId: string) {
+    const user = await this.users.findById(userId);
+    if (!user) throw ApiError.unauthorized("User no longer exists");
+
+    if (user.isEmailVerified) {
+      return { message: "Email is already verified", data: { verificationToken: null } };
+    }
+
+    const verificationToken = AuthUtils.generateEmailVerificationToken({
+      id: user.id,
+      email: user.email,
+    });
+
+    return {
+      message: "Verification email sent",
+      data: {
+        verificationToken: env.NODE_ENV === "development" ? verificationToken : null,
+      },
+    };
+  }
+
+  public async verifyEmail(token: string): Promise<{ user: UserResponse }> {
+    const decoded = AuthUtils.verifyEmailVerificationToken(token);
+    const user = await this.users.findById(decoded.id);
+
+    if (!user || User.normalizeEmail(user.email) !== User.normalizeEmail(decoded.email)) {
+      throw ApiError.unauthorized("Invalid or expired verification token");
+    }
+
+    user.markEmailVerified();
+    await this.users.update(user);
+
+    return { user: user.toResponse() };
+  }
+
+  public async me(userId: string): Promise<{ user: UserResponse }> {
+    const user = await this.users.findById(userId);
+    if (!user) throw ApiError.unauthorized("User no longer exists");
+    return { user: user.toResponse() };
+  }
+
+  public async getOnboardingStatus(userId: string) {
+    const user = await this.users.findById(userId);
+    if (!user) throw ApiError.unauthorized("User no longer exists");
+
+    return {
+      user: user.toResponse(),
+      onboardingCompleted: user.onboardingCompleted,
+      onboardingCompletedAt: user.onboardingCompletedAt,
+      onboardingProfile: user.onboardingProfile,
+    };
+  }
+
+  public async completeOnboarding(userId: string, profile: OnboardingProfile) {
+    const user = await this.users.findById(userId);
+    if (!user) throw ApiError.unauthorized("User no longer exists");
+
+    user.completeOnboarding(profile);
+    await this.users.update(user);
+
+    return {
+      user: user.toResponse(),
+      onboardingCompleted: user.onboardingCompleted,
+      onboardingCompletedAt: user.onboardingCompletedAt,
+      onboardingProfile: user.onboardingProfile,
+    };
   }
 
   public async startGoogleAuth(rawRole?: string) {
     const role = this.parseRole(rawRole);
-
-    if (!role) {
-      throw ApiError.badRequest("Valid role is required for Google login");
-    }
+    if (!role) throw ApiError.badRequest("Valid role is required for Google login");
 
     const googleConfig = this.getGoogleOAuthConfig();
     const state = AuthUtils.generateGoogleOAuthState(role);
@@ -145,320 +254,86 @@ export class AuthService {
       googleConfig.redirectUri,
     );
 
-    const { tokens } = await oauth2Client.getToken(code);
+    const { tokens: googleTokens } = await oauth2Client.getToken(code);
 
-    if (!tokens.id_token) {
+    if (!googleTokens.id_token) {
       throw ApiError.unauthorized("Google ID token is missing");
     }
 
     const ticket = await oauth2Client.verifyIdToken({
-      idToken: tokens.id_token,
+      idToken: googleTokens.id_token,
       audience: googleConfig.clientId,
     });
 
     const googleUser = ticket.getPayload();
-
     if (!googleUser?.email || !googleUser.email_verified) {
       throw ApiError.unauthorized("Google account email is not verified");
     }
 
-    const db = await DatabaseService.getInstance();
-    const email = this.normalizeEmail(googleUser.email);
-
-    let user = await db.user.findUnique({
-      where: { email },
-      select: { id: true, name: true, email: true, role: true, isActive: true, onboardingCompleted: true },
-    });
+    const email = User.normalizeEmail(googleUser.email);
+    let user = await this.users.findByEmail(email);
 
     if (!user) {
-      user = await db.user.create({
-        data: {
-          name: googleUser.name || email.split("@")[0],
-          email,
-          passwordHash: await AuthUtils.hashPassword(randomUUID()),
-          role: statePayload.role,
-          isEmailVerified: true,
-        },
-        select: { id: true, name: true, email: true, role: true, isActive: true, onboardingCompleted: true },
+      user = await User.create({
+        name: googleUser.name || email.split("@")[0],
+        email,
+        password: randomUUID(),
+        role: statePayload.role,
+        isEmailVerified: true,
       });
-
-      await this.ensureRoleProfile(user.id, statePayload.role);
+      await this.users.insert(user);
+      await this.users.ensureRoleProfile(user.id, user.role);
     } else if (user.role !== statePayload.role) {
       throw ApiError.unauthorized(
         `This account is registered as ${user.role}. Please continue as ${user.role}.`,
       );
     }
 
-    const tokensPair = this.issueTokens(user);
+    const tokens = this.issueTokens(user);
     const frontendUrl = new URL(`${this.getFrontendRedirectBase()}/login`);
     frontendUrl.hash = new URLSearchParams({
-      accessToken: tokensPair.accessToken,
-      refreshToken: tokensPair.refreshToken,
-      user: JSON.stringify(this.buildUserResponse(user)),
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      user: JSON.stringify(user.toResponse()),
     }).toString();
 
     return { redirectUrl: frontendUrl.toString() };
   }
 
-  public async login(payload: { email?: string; password?: string; role?: string }) {
-    const { email, password, role } = payload;
+  private issueTokens(user: User): TokenPair {
+    return AuthUtils.generateTokens(user.getTokenPayload());
+  }
 
-    if (!email || !password) {
-      throw ApiError.badRequest("Email and password are required");
+  private canLoginAs(actualRole: Role, requestedRole: Role): boolean {
+    if (actualRole === requestedRole) return true;
+    return (
+      actualRole === Role.ADMIN &&
+      (requestedRole === Role.CLIENT || requestedRole === Role.THERAPIST)
+    );
+  }
+
+  private parseRole(role?: string): Role | undefined {
+    if (role === Role.CLIENT || role === Role.THERAPIST || role === Role.ADMIN) {
+      return role;
     }
+    return undefined;
+  }
 
-    const selectedRole = this.parseRole(role);
-    if (!selectedRole) {
-      throw ApiError.badRequest("Valid role is required");
+  private getGoogleOAuthConfig() {
+    if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !computedEnv.GOOGLE_REDIRECT_URI) {
+      throw ApiError.badRequest("Google OAuth is not configured");
     }
-
-    const db = await DatabaseService.getInstance();
-    const user = await db.user.findUnique({
-      where: { email: this.normalizeEmail(email) },
-      select: { id: true, name: true, email: true, role: true, passwordHash: true, isActive: true, onboardingCompleted: true },
-    });
-
-    if (!user) {
-      throw ApiError.unauthorized("Invalid email or password");
-    }
-
-    if (!user.isActive) {
-      throw ApiError.unauthorized("User account is inactive");
-    }
-
-    // Allow ADMIN to log in as CLIENT or THERAPIST
-    if (selectedRole !== user.role) {
-      if (user.role === Role.ADMIN && (selectedRole === Role.CLIENT || selectedRole === Role.THERAPIST)) {
-        // allow
-      } else {
-        throw ApiError.unauthorized(
-          `This account is registered as ${user.role}. Please continue as ${user.role}.`,
-        );
-      }
-    }
-
-    const isPasswordValid = await AuthUtils.comparePassword(password, user.passwordHash);
-    if (!isPasswordValid) {
-      throw ApiError.unauthorized("Invalid email or password");
-    }
-
-    const tokensPair = this.issueTokens(user);
-
     return {
-      user: this.buildUserResponse(user),
-      ...tokensPair,
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+      redirectUri: computedEnv.GOOGLE_REDIRECT_URI,
     };
   }
 
-  public async refresh(refreshToken?: string) {
-    if (!refreshToken) {
-      throw ApiError.badRequest("Refresh token is required");
-    }
-
-    const decoded = AuthUtils.verifyRefreshToken(refreshToken);
-    const db = await DatabaseService.getInstance();
-    const user = await db.user.findUnique({
-      where: { id: decoded.id },
-      select: { id: true, name: true, email: true, role: true, isActive: true, onboardingCompleted: true },
-    });
-
-    if (!user) {
-      throw ApiError.unauthorized("User no longer exists");
-    }
-
-    if (!user.isActive) {
-      throw ApiError.unauthorized("User account is inactive");
-    }
-
-    const tokensPair = this.issueTokens(user);
-
-    return {
-      user: this.buildUserResponse(user),
-      ...tokensPair,
-    };
-  }
-
-  public async forgotPassword(email?: string) {
-    if (!email) {
-      throw ApiError.badRequest("Email is required");
-    }
-
-    const db = await DatabaseService.getInstance();
-    const user = await db.user.findUnique({
-      where: { email: this.normalizeEmail(email) },
-      select: { id: true, email: true },
-    });
-
-    if (!user) {
-      return {
-        message: "If this email exists, password reset instructions have been sent",
-        data: { resetToken: null as string | null },
-      };
-    }
-
-    const resetToken = AuthUtils.generatePasswordResetToken({
-      id: user.id,
-      email: user.email,
-    });
-
-    return {
-      message: "Password reset token generated",
-      data: {
-        resetToken: env.NODE_ENV === "development" ? resetToken : null,
-      },
-    };
-  }
-
-  public async resetPassword(token?: string, newPassword?: string) {
-    if (!token || !newPassword) {
-      throw ApiError.badRequest("Reset token and new password are required");
-    }
-
-    if (newPassword.length < 6) {
-      throw ApiError.badRequest("New password must be at least 6 characters");
-    }
-
-    const decoded = AuthUtils.verifyPasswordResetToken(token);
-    const db = await DatabaseService.getInstance();
-    const user = await db.user.findUnique({ where: { id: decoded.id } });
-
-    if (!user || this.normalizeEmail(user.email) !== this.normalizeEmail(decoded.email)) {
-      throw ApiError.unauthorized("Invalid or expired reset token");
-    }
-
-    await db.user.update({
-      where: { id: user.id },
-      data: { passwordHash: await AuthUtils.hashPassword(newPassword) },
-    });
-  }
-
-  public async changePassword(userId: string, payload: { currentPassword?: string; newPassword?: string }) {
-    const { currentPassword, newPassword } = payload;
-
-    if (!currentPassword || !newPassword) {
-      throw ApiError.badRequest("Current password and new password are required");
-    }
-
-    if (newPassword.length < 6) {
-      throw ApiError.badRequest("New password must be at least 6 characters");
-    }
-
-    const db = await DatabaseService.getInstance();
-    const user = await db.user.findUnique({
-      where: { id: userId },
-      select: { id: true, passwordHash: true },
-    });
-
-    if (!user) {
-      throw ApiError.unauthorized("User no longer exists");
-    }
-
-    const isPasswordValid = await AuthUtils.comparePassword(currentPassword, user.passwordHash);
-    if (!isPasswordValid) {
-      throw ApiError.unauthorized("Current password is incorrect");
-    }
-
-    await db.user.update({
-      where: { id: user.id },
-      data: { passwordHash: await AuthUtils.hashPassword(newPassword) },
-    });
-  }
-
-  public async me(userId: string) {
-    const db = await DatabaseService.getInstance();
-    const user = await db.user.findUnique({
-      where: { id: userId },
-      select: { id: true, name: true, email: true, role: true, isActive: true, onboardingCompleted: true },
-    });
-
-    if (!user) {
-      throw ApiError.unauthorized("User no longer exists");
-    }
-
-    return { user: this.buildUserResponse(user) };
-  }
-
-  public async getOnboardingStatus(userId: string) {
-    const db = await DatabaseService.getInstance();
-    const user = await db.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        isActive: true,
-        onboardingCompleted: true,
-        onboardingCompletedAt: true,
-        onboardingProfile: true,
-      },
-    });
-
-    if (!user) {
-      throw ApiError.unauthorized("User no longer exists");
-    }
-
-    return {
-      user: this.buildUserResponse(user),
-      onboardingCompleted: user.onboardingCompleted,
-      onboardingCompletedAt: user.onboardingCompletedAt,
-      onboardingProfile: user.onboardingProfile,
-    };
-  }
-
-  public async completeOnboarding(
-    userId: string,
-    payload: {
-      fullName?: string;
-      careGoal?: OnboardingProfile["careGoal"];
-      sessionStyle?: OnboardingProfile["sessionStyle"];
-      reminderChannel?: OnboardingProfile["reminderChannel"];
-    },
-  ) {
-    const { fullName, careGoal, sessionStyle, reminderChannel } = payload;
-
-    if (!fullName?.trim()) {
-      throw ApiError.badRequest("Full name is required");
-    }
-
-    if (!careGoal || !sessionStyle || !reminderChannel) {
-      throw ApiError.badRequest("Onboarding details are required");
-    }
-
-    const db = await DatabaseService.getInstance();
-    const profile: OnboardingProfile = {
-      fullName: fullName.trim(),
-      careGoal,
-      sessionStyle,
-      reminderChannel,
-    };
-
-    const user = await db.user.update({
-      where: { id: userId },
-      data: {
-        name: profile.fullName,
-        onboardingCompleted: true,
-        onboardingCompletedAt: new Date(),
-        onboardingProfile: profile,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        isActive: true,
-        onboardingCompleted: true,
-        onboardingCompletedAt: true,
-        onboardingProfile: true,
-      },
-    });
-
-    return {
-      user: this.buildUserResponse(user),
-      onboardingCompleted: user.onboardingCompleted,
-      onboardingCompletedAt: user.onboardingCompletedAt,
-      onboardingProfile: user.onboardingProfile,
-    };
+  private getFrontendRedirectBase(): string {
+    return env.NODE_ENV === "production"
+      ? env.FRONTEND_SERVER_URL || env.FRONTEND_LOCAL_URL
+      : env.FRONTEND_LOCAL_URL;
   }
 }
 

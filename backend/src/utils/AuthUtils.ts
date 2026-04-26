@@ -120,6 +120,37 @@ export class AuthUtils {
   }
 
   /**
+   * Generate an email verification token
+   */
+  public static generateEmailVerificationToken(payload: { id: string; email: string }) {
+    return jwt.sign(
+      { ...payload, purpose: "email-verification" },
+      env.JWT_SESSION_SECRET,
+      { expiresIn: "24h" },
+    );
+  }
+
+  /**
+   * Verify an email verification token
+   */
+  public static verifyEmailVerificationToken(token: string): EmailVerificationPayload {
+    const decoded = jwt.verify(token, env.JWT_SESSION_SECRET) as EmailVerificationPayload;
+
+    if (decoded.purpose !== "email-verification") {
+      throw new Error("Invalid email verification token");
+    }
+
+    return decoded;
+  }
+
+  /**
+   * Decode refresh token without throwing (used for revocation)
+   */
+  public static decodeRefreshToken(token: string): DecodedRefreshToken | null {
+    return jwt.decode(token) as DecodedRefreshToken | null;
+  }
+
+  /**
    * Hash a plain text password
    * @param password Plain text password
    */
