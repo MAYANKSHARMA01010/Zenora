@@ -197,6 +197,7 @@ model Session {
   id                 String        @id @default(uuid())
   clientId           String
   therapistId        String
+  slotId             String
   status             SessionStatus
   type               SessionType
   scheduledAt        DateTime
@@ -209,8 +210,9 @@ model Session {
   updatedAt          DateTime      @updatedAt
 
   // Relations
-  client        Client         @relation(fields: [clientId], references: [id])
-  therapist     Therapist      @relation(fields: [therapistId], references: [id])
+  client        Client           @relation(fields: [clientId], references: [id])
+  therapist     Therapist        @relation(fields: [therapistId], references: [id])
+  slot          AvailabilitySlot @relation(fields: [slotId], references: [id])
   payment       Payment?
   aiInteraction AIInteraction?
   rating        Rating?
@@ -418,8 +420,8 @@ model AvailabilitySlot {
   isBooked    Boolean  @default(false)
   createdAt   DateTime @default(now())
 
-  // Relations
   therapist Therapist @relation(fields: [therapistId], references: [id])
+  sessions  Session[]
 
   @@index([therapistId, startTime])
 }

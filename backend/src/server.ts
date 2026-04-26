@@ -1,3 +1,4 @@
+import http from "http";
 import { App } from "./app";
 import { env } from "./config/env";
 import { DatabaseService } from "./config/database";
@@ -8,6 +9,8 @@ import ProfileRoutes from "./routes/profile.routes";
 import TherapistRoutes from "./routes/therapist.routes";
 import AvailabilityRoutes from "./routes/availability.routes";
 import AdminRoutes from "./routes/admin.routes";
+import SessionRoutes from "./routes/session.routes";
+import { ChatSocketHandler } from "./socket/chatSocket";
 
 const app = new App([
   new AuthRoutes(),
@@ -15,6 +18,7 @@ const app = new App([
   new TherapistRoutes(),
   new AvailabilityRoutes(),
   new AdminRoutes(),
+  new SessionRoutes(),   // Member 3 — Session & Chat
 ]).express;
 
 export class Server {
@@ -26,9 +30,14 @@ export class Server {
       // 2. Initialize Redis
       RedisService.getInstance();
       
-      // 3. Start Listening
-      const server = app.listen(env.SERVER_PORT, () => {
+      // 3. Create HTTP server & attach Socket.io (Member 3)
+      const httpServer = http.createServer(app);
+      const _chatSocket = new ChatSocketHandler(httpServer);
+
+      // 4. Start Listening
+      const server = httpServer.listen(env.SERVER_PORT, () => {
         LoggerService.info(`🚀 Server running in ${env.NODE_ENV} mode on port ${env.SERVER_PORT}`);
+        LoggerService.info(`🔌 Socket.io ready on port ${env.SERVER_PORT}`);
       });
 
       // 4. Graceful Shutdown
