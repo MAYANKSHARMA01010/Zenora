@@ -75,6 +75,20 @@ enum CrisisLevel {
   CRITICAL
 }
 
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum DocumentType {
+  LICENSE
+  ID_PROOF
+  DEGREE
+  CERTIFICATE
+  OTHER
+}
+
 // -----------------------------------------------------------------------------
 // MODELS
 // -----------------------------------------------------------------------------
@@ -126,26 +140,50 @@ model Client {
 }
 
 model Therapist {
-  id              String   @id @default(uuid())
-  user            User     @relation(fields: [id], references: [id], onDelete: Cascade)
-  licenseNumber   String   @unique
-  specialization  String
-  isVerified      Boolean  @default(false)
-  rating          Float    @default(0)
-  totalRatings    Int      @default(0)
-  workingHours    Json
-  bio             String?
-  experience      Int
-  bankAccountInfo Json?
+  id                  String             @id @default(uuid())
+  user                User               @relation(fields: [id], references: [id], onDelete: Cascade)
+  licenseNumber       String             @unique
+  specialization      String
+  languages           String[]           @default([])
+  isVerified          Boolean            @default(false)
+  verificationStatus  VerificationStatus @default(PENDING)
+  rejectionReason     String?
+  verifiedAt          DateTime?
+  rating              Float              @default(0)
+  totalRatings        Int                @default(0)
+  workingHours        Json
+  bio                 String?
+  experience          Int
+  hourlyRate          Float?
+  bankAccountInfo     Json?
 
   // Relations
-  sessions      Session[]
-  prescriptions Prescription[]
-  complaints    Complaint[]   @relation("TherapistComplaints")
-  ratings       Rating[]
-  earnings      Earning[]
-  treatmentPlans TreatmentPlan[]
+  sessions          Session[]
+  prescriptions     Prescription[]
+  complaints        Complaint[]         @relation("TherapistComplaints")
+  ratings           Rating[]
+  earnings          Earning[]
+  treatmentPlans    TreatmentPlan[]
   availabilitySlots AvailabilitySlot[]
+  documents         TherapistDocument[]
+
+  @@index([verificationStatus])
+  @@index([specialization])
+  @@index([rating])
+}
+
+model TherapistDocument {
+  id          String       @id @default(uuid())
+  therapistId String
+  type        DocumentType
+  fileUrl     String
+  fileName    String?
+  notes       String?
+  createdAt   DateTime     @default(now())
+
+  therapist Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+
+  @@index([therapistId, type])
 }
 
 model Admin {
